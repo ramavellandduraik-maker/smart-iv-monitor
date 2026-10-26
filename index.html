@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart IV Drip Monitor</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --navy:    #0d1b3e;
+      --cobalt:  #1a4f96;
+      --sky:     #2e86c1;
+      --ice:     #d6e8f7;
+      --white:   #ffffff;
+      --off:     #f5f7fa;
+      --lgray:   #e2e8f0;
+      --mgray:   #8a99ad;
+      --dgray:   #2d3a4a;
+      --green:   #1a7a4a;
+      --red:     #c0392b;
+      --amber:   #ca6f1e;
+      --teal:    #117a8b;
+    }
+    html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif;
+                 background: var(--off); color: var(--dgray); }
+
+    /* ── Top navbar ───────────────────────────────────────────────────── */
+    nav {
+      background: var(--navy);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 1.5rem; height: 56px; position: sticky; top: 0; z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,.35);
+    }
+    nav .brand { color: var(--white); font-size: 1rem; font-weight: 700;
+                 letter-spacing: .04em; }
+    nav .brand span { color: var(--sky); }
+    nav .status-dot { width: 9px; height: 9px; border-radius: 50%;
+                      background: #2ecc71; display: inline-block;
+                      margin-right: .45rem; animation: pulse 1.8s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }  50% { opacity: .4; }
+    }
+    nav .conn-label { color: var(--mgray); font-size: .8rem; }
+
+    /* ── Alert banner ─────────────────────────────────────────────────── */
+    #alert-banner {
+      display: none; background: var(--red); color: var(--white);
+      padding: .55rem 1.5rem; font-size: .88rem; font-weight: 600;
+      border-bottom: 2px solid #922b21;
+    }
+    #alert-banner .ack-btn {
+      margin-left: 1rem; background: rgba(255,255,255,.2);
+      border: 1px solid rgba(255,255,255,.5); color: var(--white);
+      padding: .2rem .7rem; border-radius: 4px; cursor: pointer; font-size: .8rem;
+    }
+    #alert-banner .ack-btn:hover { background: rgba(255,255,255,.35); }
+
+    /* ── Main layout ──────────────────────────────────────────────────── */
+    main { max-width: 1440px; margin: 0 auto; padding: 1.4rem 1.5rem 2rem; }
+
+    /* ── Section title ─────────────────────────────────────────────────── */
+    .section-title {
+      font-size: .7rem; font-weight: 700; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--cobalt);
+      margin-bottom: .75rem; padding-left: .25rem;
+      border-left: 3px solid var(--sky); padding-left: .55rem;
+    }
+
+    /* ── Patient cards grid ───────────────────────────────────────────── */
+    #cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+             gap: 1.1rem; margin-bottom: 2rem; }
+
+    .card {
+      background: var(--white); border-radius: 8px;
+      border: 1px solid var(--lgray); overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,.07);
+      transition: box-shadow .2s;
+    }
+    .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+
+    .card-header {
+      background: var(--navy); padding: .65rem 1rem;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .card-header .pid { color: var(--sky); font-size: .72rem; font-weight: 700;
+                        letter-spacing: .08em; }
+    .card-header .pname { color: var(--white); font-size: .92rem; font-weight: 600; }
+    .badge {
+      font-size: .68rem; font-weight: 700; padding: .2rem .55rem;
+      border-radius: 3px; letter-spacing: .06em; text-transform: uppercase;
+    }
+    .badge-normal   { background: #1e7e45; color: #fff; }
+    .badge-low      { background: var(--amber); color: #fff; }
+    .badge-blockage { background: var(--red); color: #fff; }
+    .badge-free     { background: #7d3c98; color: #fff; }
+    .badge-air      { background: var(--teal); color: #fff; }
+    .badge-empty    { background: #1c2333; color: #e74c3c; border: 1px solid #e74c3c; }
+    .badge-waiting  { background: var(--lgray); color: var(--mgray); }
+
+    .card-body { padding: 1rem; }
+
+    /* Metrics row */
+    .metrics { display: flex; gap: .75rem; margin-bottom: .85rem; }
+    .metric {
+      flex: 1; background: var(--off); border: 1px solid var(--lgray);
+      border-radius: 6px; padding: .5rem .6rem; text-align: center;
+    }
+    .metric .val { font-size: 1.35rem; font-weight: 700; color: var(--navy); line-height: 1; }
+    .metric .lbl { font-size: .65rem; color: var(--mgray); text-transform: uppercase;
+                   letter-spacing: .06em; margin-top: .2rem; }
+
+    /* Fluid bar */
+    .fluid-bar-wrap { margin-bottom: .65rem; }
+    .fluid-bar-wrap .bar-label {
+      display: flex; justify-content: space-between;
+      font-size: .72rem; color: var(--mgray); margin-bottom: .3rem;
+    }
+    .bar-track {
+      height: 10px; background: var(--lgray); border-radius: 5px; overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%; border-radius: 5px;
+      transition: width .6s ease, background .4s;
+    }
+
+    /* Mini chart */
+    .mini-chart { position: relative; height: 70px; }
+
+    /* ── Charts section ──────────────────────────────────────────────── */
+    #charts-section { margin-bottom: 2rem; }
+    .charts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px,1fr));
+                   gap: 1.1rem; }
+    .chart-card {
+      background: var(--white); border-radius: 8px; border: 1px solid var(--lgray);
+      padding: 1rem 1.1rem 1rem; box-shadow: 0 1px 4px rgba(0,0,0,.07);
+    }
+    .chart-card h3 { font-size: .8rem; font-weight: 700; color: var(--cobalt);
+                     margin-bottom: .75rem; letter-spacing: .04em; }
+    .chart-card canvas { max-height: 180px; }
+
+    /* ── Alerts panel ─────────────────────────────────────────────────── */
+    #alerts-section { margin-bottom: 2rem; }
+    #alert-list { display: flex; flex-direction: column; gap: .5rem; }
+    .alert-item {
+      background: var(--white); border-radius: 6px; border-left: 4px solid var(--red);
+      padding: .65rem 1rem; display: flex; align-items: center;
+      justify-content: space-between; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+      font-size: .86rem;
+    }
+    .alert-item.low     { border-color: var(--amber); }
+    .alert-item.ack     { border-color: var(--lgray); opacity: .55; }
+    .alert-item .atype  { font-weight: 700; color: var(--red); margin-right: .6rem;
+                          font-size: .72rem; text-transform: uppercase; }
+    .alert-item.low .atype { color: var(--amber); }
+    .alert-item .amsg   { color: var(--dgray); flex: 1; }
+    .alert-item .atime  { font-size: .7rem; color: var(--mgray); margin-left: .8rem; white-space: nowrap; }
+    .alert-item button  {
+      margin-left: .8rem; background: var(--off); border: 1px solid var(--lgray);
+      border-radius: 4px; padding: .18rem .6rem; cursor: pointer;
+      font-size: .72rem; color: var(--cobalt); font-weight: 600;
+    }
+    .alert-item button:hover { background: var(--ice); }
+    .no-alerts { color: var(--mgray); font-size: .88rem; padding: .5rem; }
+
+    /* ── Footer ───────────────────────────────────────────────────────── */
+    footer {
+      text-align: center; padding: 1rem; font-size: .75rem;
+      color: var(--mgray); border-top: 1px solid var(--lgray);
+    }
+
+    /* ── Toast notification ───────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999;
+      background: var(--navy); color: var(--white); padding: .75rem 1.2rem;
+      border-radius: 7px; font-size: .86rem; font-weight: 600;
+      border-left: 4px solid var(--red);
+      opacity: 0; transform: translateY(12px);
+      transition: opacity .3s, transform .3s;
+      max-width: 340px; pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav>
+  <div class="brand">Smart <span>IV</span> Drip Monitor</div>
+  <div style="display:flex;align-items:center;gap:1.2rem;">
+    <div id="conn-status">
+      <span class="status-dot" id="dot"></span>
+      <span class="conn-label" id="conn-lbl">Connecting…</span>
+    </div>
+    <div style="color:var(--mgray);font-size:.8rem;" id="last-update">—</div>
+  </div>
+</nav>
+
+<!-- Alert banner (top-level critical) -->
+<div id="alert-banner">
+  <span id="alert-banner-msg"></span>
+  <button class="ack-btn" onclick="dismissBanner()">Dismiss</button>
+</div>
+
+<main>
+
+  <!-- Patient Cards -->
+  <div class="section-title" style="margin-top:.5rem;">Live Patient Monitoring</div>
+  <div id="cards"></div>
+
+  <!-- Charts -->
+  <div id="charts-section">
+    <div class="section-title">Drip Rate — Historical (last 2 min)</div>
+    <div class="charts-grid" id="charts-grid"></div>
+  </div>
+
+  <!-- Alerts -->
+  <div id="alerts-section">
+    <div class="section-title">Active Alerts</div>
+    <div id="alert-list"><p class="no-alerts">No active alerts.</p></div>
+  </div>
+
+</main>
+
+<footer>Smart IV Drip Monitor &nbsp;|&nbsp; Medical IoT PBL &nbsp;|&nbsp;
+  Sharon Thomas &nbsp;·&nbsp; Sasi Sornamalan &nbsp;·&nbsp; Sudharman &nbsp;·&nbsp; Ramavellanddurai
+</footer>
+
+<div id="toast"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+const PATIENTS     = {};  // { pid: { latest, history:[], chart } }
+const MAX_HISTORY  = 80;  // data points kept per patient
+const CHART_COLORS = ["#2e86c1", "#1a7a4a", "#7d3c98"];
+let   alertQueue   = [];
+let   bannerAlertId = null;
+
+// ── Socket.IO connection ──────────────────────────────────────────────────────
+const socket = io();
+
+socket.on("connect", () => {
+  setConn(true);
+});
+socket.on("disconnect", () => {
+  setConn(false);
+});
+
+// Snapshot on first connect
+socket.on("snapshot", (rows) => {
+  rows.forEach(d => processReading(d));
+});
+
+// Live readings
+socket.on("reading", (d) => {
+  processReading(d);
+  document.getElementById("last-update").textContent =
+    "Updated " + new Date().toLocaleTimeString();
+});
+
+// New alert from server
+socket.on("new_alert", (a) => {
+  alertQueue.unshift(a);
+  renderAlerts();
+  showToast(a.alert_type + ": " + a.message);
+  if (["EMPTY","BLOCKAGE","AIR_BUBBLE"].includes(a.alert_type)) {
+    showBanner(a.message, a.id);
+  }
+});
+
+socket.on("alert_acknowledged", ({alert_id}) => {
+  alertQueue = alertQueue.filter(a => a.id !== alert_id);
+  renderAlerts();
+});
+
+// ── Also poll REST on page load for initial alerts ────────────────────────────
+fetch("/api/alerts/active")
+  .then(r => r.json())
+  .then(rows => { alertQueue = rows; renderAlerts(); })
+  .catch(() => {});
+
+// ── Connection indicator ──────────────────────────────────────────────────────
+function setConn(ok) {
+  document.getElementById("dot").style.background  = ok ? "#2ecc71" : "#e74c3c";
+  document.getElementById("conn-lbl").textContent   = ok ? "Live" : "Disconnected";
+}
+
+// ── Process an incoming reading packet ────────────────────────────────────────
+function processReading(d) {
+  const pid = d.patient_id;
+
+  if (!PATIENTS[pid]) {
+    PATIENTS[pid] = { latest: null, history: [], chart: null, dripChart: null };
+    createCard(pid, d);
+    createChart(pid, d);
+  }
+
+  const p = PATIENTS[pid];
+  p.latest = d;
+  p.history.push({ t: d.timestamp, r: d.drip_rate, f: d.fluid_pct });
+  if (p.history.length > MAX_HISTORY) p.history.shift();
+
+  updateCard(pid, d);
+  updateChart(pid);
+}
+
+// ── Patient card DOM ──────────────────────────────────────────────────────────
+function createCard(pid, d) {
+  const grid = document.getElementById("cards");
+  const card = document.createElement("div");
+  card.className = "card";
+  card.id = `card-${pid}`;
+  card.innerHTML = `
+    <div class="card-header">
+      <div>
+        <div class="pid">${pid}</div>
+        <div class="pname">${d.patient_name}</div>
+      </div>
+      <span class="badge badge-waiting" id="badge-${pid}">—</span>
+    </div>
+    <div class="card-body">
+      <div class="metrics">
+        <div class="metric"><div class="val" id="rate-${pid}">—</div>
+          <div class="lbl">drops / min</div></div>
+        <div class="metric"><div class="val" id="fluid-${pid}">—</div>
+          <div class="lbl">fluid %</div></div>
+        <div class="metric"><div class="val" id="temp-${pid}">—</div>
+          <div class="lbl">temp °C</div></div>
+        <div class="metric"><div class="val" id="ml-${pid}">—</div>
+          <div class="lbl">mL left</div></div>
+      </div>
+      <div class="fluid-bar-wrap">
+        <div class="bar-label">
+          <span>Fluid Level</span>
+          <span id="ml-label-${pid}">— / — mL</span>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" id="bar-${pid}" style="width:100%;background:#2ecc71;"></div>
+        </div>
+      </div>
+    </div>`;
+  grid.appendChild(card);
+}
+
+function updateCard(pid, d) {
+  setText(`rate-${pid}`,  d.drip_rate.toFixed(1));
+  setText(`fluid-${pid}`, d.fluid_pct.toFixed(1) + "%");
+  setText(`temp-${pid}`,  d.temperature.toFixed(1));
+  setText(`ml-${pid}`,    d.remaining_ml.toFixed(0));
+  setText(`ml-label-${pid}`, `${d.remaining_ml.toFixed(0)} / ${d.total_ml} mL`);
+
+  // Fluid bar colour
+  const bar = document.getElementById(`bar-${pid}`);
+  if (bar) {
+    bar.style.width = d.fluid_pct + "%";
+    bar.style.background =
+      d.fluid_pct < 10 ? "#e74c3c" :
+      d.fluid_pct < 25 ? "#ca6f1e" : "#2ecc71";
+  }
+
+  // Status badge
+  const badge = document.getElementById(`badge-${pid}`);
+  if (badge) {
+    const map = {
+      NORMAL: ["NORMAL", "badge-normal"],
+      LOW_FLUID: ["LOW FLUID", "badge-low"],
+      BLOCKAGE: ["BLOCKAGE", "badge-blockage"],
+      FREE_FLOW: ["FREE FLOW", "badge-free"],
+      AIR_BUBBLE: ["AIR BUBBLE", "badge-air"],
+      EMPTY: ["EMPTY", "badge-empty"],
+    };
+    const [lbl, cls] = map[d.status] || ["UNKNOWN", "badge-waiting"];
+    badge.textContent = lbl;
+    badge.className   = `badge ${cls}`;
+  }
+
+  // Flash card border on alert
+  const card = document.getElementById(`card-${pid}`);
+  if (card && d.status !== "NORMAL") {
+    card.style.borderColor = "#e74c3c";
+    setTimeout(() => card.style.borderColor = "", 2500);
+  }
+}
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+// ── Per-patient drip-rate chart ────────────────────────────────────────────────
+function createChart(pid, d) {
+  const grid = document.getElementById("charts-grid");
+  const wrap = document.createElement("div");
+  wrap.className = "chart-card";
+  wrap.innerHTML = `<h3>${d.patient_name} &mdash; Drip Rate (drops/min)</h3>
+                    <canvas id="chart-${pid}"></canvas>`;
+  grid.appendChild(wrap);
+
+  const ctx = document.getElementById(`chart-${pid}`).getContext("2d");
+  const colorIdx = Object.keys(PATIENTS).indexOf(pid) % CHART_COLORS.length;
+  const clr = CHART_COLORS[colorIdx];
+
+  PATIENTS[pid].chart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [{
+        label: "Drip Rate",
+        data: [],
+        borderColor: clr,
+        backgroundColor: clr + "22",
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.4,
+        fill: true,
+      }]
+    },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { font: { size: 9 }, maxTicksLimit: 8 },
+             grid: { color: "#e2e8f0" } },
+        y: { min: 0, ticks: { font: { size: 9 } },
+             grid: { color: "#e2e8f0" } },
+      }
+    }
+  });
+}
+
+function updateChart(pid) {
+  const p = PATIENTS[pid];
+  if (!p.chart) return;
+  const ds   = p.chart.data.datasets[0];
+  const labels = p.history.map(h => h.t.slice(11, 19));  // HH:MM:SS
+  p.chart.data.labels  = labels;
+  ds.data              = p.history.map(h => h.r);
+  p.chart.update("none");
+}
+
+// ── Alert list ────────────────────────────────────────────────────────────────
+function renderAlerts() {
+  const list = document.getElementById("alert-list");
+  if (!alertQueue.length) {
+    list.innerHTML = `<p class="no-alerts">No active alerts.</p>`;
+    return;
+  }
+  list.innerHTML = alertQueue.map(a => `
+    <div class="alert-item ${["LOW_FLUID","FREE_FLOW"].includes(a.alert_type) ? "low" : ""}">
+      <span class="atype">${a.alert_type.replace("_"," ")}</span>
+      <span class="amsg">${a.message}</span>
+      <span class="atime">${(a.created_at || "").slice(11,19)}</span>
+      ${a.id ? `<button onclick="ackAlert(${a.id})">Acknowledge</button>` : ""}
+    </div>`).join("");
+}
+
+function ackAlert(id) {
+  fetch(`/api/alerts/${id}/acknowledge`, { method: "POST" });
+}
+
+// ── Banner ────────────────────────────────────────────────────────────────────
+function showBanner(msg, id) {
+  bannerAlertId = id;
+  document.getElementById("alert-banner-msg").textContent = msg;
+  document.getElementById("alert-banner").style.display = "block";
+}
+function dismissBanner() {
+  document.getElementById("alert-banner").style.display = "none";
+  if (bannerAlertId) ackAlert(bannerAlertId);
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 4500);
+}
+</script>
+</body>
+</html>

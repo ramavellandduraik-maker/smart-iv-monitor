@@ -182,6 +182,11 @@ def evaluate(data):
     else:
         _clear("AIR_BUBBLE")
 
+    if status == "ENV_HOT" or data.get("ambient_temp", 24) > 28.0:
+        _fire("ENV_HOT", f"{name} — Ward temperature {data.get('ambient_temp', 31.5)}°C exceeds 28°C threshold. Risk of IV medication degradation.")
+    else:
+        _clear("ENV_HOT")
+
     return fired
 
 # ── MQTT Subscriber ───────────────────────────────────────────────────────────
@@ -270,6 +275,15 @@ def compute_packet(patient):
     elif status == "NORMAL" and fluid_pct < 10:
         status = "LOW_FLUID"
 
+    amb_temp = round(random.uniform(22.5, 25.5), 1)
+    amb_hum  = round(random.uniform(48.0, 58.0), 1)
+
+    if st["current_anomaly"] == "ENV_HOT":
+        amb_temp = 31.8
+        status = "ENV_HOT"
+        if random.random() < 0.25:
+            st["current_anomaly"] = None
+
     return {
         "patient_id": pid,
         "patient_name": patient["name"],
@@ -277,7 +291,9 @@ def compute_packet(patient):
         "fluid_pct": fluid_pct,
         "remaining_ml": round(st["remaining_ml"], 1),
         "total_ml": patient["bag_ml"],
-        "temperature": round(random.uniform(36.2, 37.4), 1),
+        "temperature": amb_temp,
+        "ambient_temp": amb_temp,
+        "ambient_humidity": amb_hum,
         "status": status,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }

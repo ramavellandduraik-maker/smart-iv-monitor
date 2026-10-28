@@ -188,7 +188,7 @@
 
 <!-- Navbar -->
 <nav>
-  <div class="brand">Smart <span>IV</span> Drip Monitor</div>
+  <div class="brand">Smart <span>IV</span> &amp; Ward Climate Monitor (DHT11)</div>
   <div style="display:flex;align-items:center;gap:1.2rem;">
     <div id="conn-status">
       <span class="status-dot" id="dot"></span>
@@ -327,7 +327,9 @@ function createCard(pid, d) {
         <div class="metric"><div class="val" id="fluid-${pid}">—</div>
           <div class="lbl">fluid %</div></div>
         <div class="metric"><div class="val" id="temp-${pid}">—</div>
-          <div class="lbl">temp °C</div></div>
+          <div class="lbl">DHT11 Temp</div></div>
+        <div class="metric"><div class="val" id="hum-${pid}">—</div>
+          <div class="lbl">DHT11 Humid</div></div>
         <div class="metric"><div class="val" id="ml-${pid}">—</div>
           <div class="lbl">mL left</div></div>
       </div>
@@ -347,7 +349,8 @@ function createCard(pid, d) {
 function updateCard(pid, d) {
   setText(`rate-${pid}`,  d.drip_rate.toFixed(1));
   setText(`fluid-${pid}`, d.fluid_pct.toFixed(1) + "%");
-  setText(`temp-${pid}`,  d.temperature.toFixed(1));
+  setText(`temp-${pid}`,  (d.ambient_temp !== undefined ? d.ambient_temp.toFixed(1) : (d.temperature ? d.temperature.toFixed(1) : "24.0")) + "°C");
+  setText(`hum-${pid}`,   (d.ambient_humidity !== undefined ? d.ambient_humidity.toFixed(0) : "52") + "%");
   setText(`ml-${pid}`,    d.remaining_ml.toFixed(0));
   setText(`ml-label-${pid}`, `${d.remaining_ml.toFixed(0)} / ${d.total_ml} mL`);
 
@@ -369,6 +372,7 @@ function updateCard(pid, d) {
       BLOCKAGE: ["BLOCKAGE", "badge-blockage"],
       FREE_FLOW: ["FREE FLOW", "badge-free"],
       AIR_BUBBLE: ["AIR BUBBLE", "badge-air"],
+      ENV_HOT: ["MED SPOILAGE RISK", "badge-low"],
       EMPTY: ["EMPTY", "badge-empty"],
     };
     const [lbl, cls] = map[d.status] || ["UNKNOWN", "badge-waiting"];
